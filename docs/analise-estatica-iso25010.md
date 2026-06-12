@@ -1,82 +1,89 @@
-# Análise Estática – ISO 25010 (Manutenibilidade)
+# Análise Estática — ISO 25010 (Manutenibilidade)
 
-> Documentação técnica da infraestrutura de análise estática do Spring PetClinic REST,
-> configurada com **PMD 7.x** (microestrutural) e **ArchUnit 1.3.0** (macro-arquitetural).
+Documentação técnica da infraestrutura de análise estática do Spring PetClinic REST, configurada com **PMD 7.x** (microestrutural) e **ArchUnit 1.3.0** (macro-arquitetural), mapeada para as subcaracterísticas de **Manutenibilidade** da ISO/IEC 25010.
 
 ---
 
-## 1. Visão Geral da Arquitetura de Análise
+## 1. Fundamentação: Por que Análise Estática no TCC?
+
+Fowler (2018) define *code smells* como "estruturas no código que sugerem a possibilidade de refatoração". Smells não são bugs — são indicadores de decisões de design que podem ter consequências negativas sob estresse. A análise estática automatiza a detecção desses indicadores, transformando observações subjetivas ("esse código parece acoplado") em **métricas objetivas** (CBO=24).
+
+Richards e Ford (2020) elevam esse conceito ao introduzir *fitness functions*: "mecanismos automatizados que validam se uma característica arquitetural está sendo preservada". Neste TCC, as regras PMD e os testes ArchUnit funcionam como fitness functions de Manutenibilidade:
+
+- **PMD:** detecta anomalias **micro**estruturais (dentro de uma classe ou método)
+- **ArchUnit:** valida invariantes **macro**arquiteturais (entre pacotes e camadas)
+
+A combinação de ambas oferece cobertura nos dois níveis de granularidade que Elemar Jr. destaca como necessários para uma análise de saúde arquitetural completa: "métricas de classe informam a qualidade do código; métricas de pacote informam a qualidade da arquitetura".
+
+### Pipeline de Análise
 
 ```mermaid
-graph TD
-    subgraph "Análise Microestrutural (PMD)"
-        R[ruleset.xml] --> P[maven-pmd-plugin 3.26.0]
-        P --> CSV[target/site/pmd.csv]
-        P --> XML[target/site/pmd.xml]
+flowchart LR
+    subgraph "Entrada"
+        SRC["Código-fonte\n(Java)"]
     end
 
-    subgraph "Análise Macro-Arquitetural (ArchUnit)"
-        T[ValidacaoArquiteturalTest.java] --> AR[ArchUnit 1.3.0 + JUnit 5]
-        AR --> LOGS[Surefire Reports + Console]
+    subgraph "Análise Micro (PMD)"
+        RS["ruleset.xml\n(8 regras)"]
+        PMD["maven-pmd-plugin\n3.26.0"]
+        CSV["target/site/pmd.csv"]
     end
 
-    CSV --> TAB[Tabulação Manual]
-    LOGS --> TAB
-    TAB --> ISO[Relatório ISO 25010]
+    subgraph "Análise Macro (ArchUnit)"
+        TEST["ValidacaoArquiteturalTest\n(JUnit 5)"]
+        ARCH["ArchUnit 1.3.0"]
+        LOG["Console + Surefire"]
+    end
+
+    subgraph "Correlação"
+        TAB["Tabulação\n(CSV + Console)"]
+        ISO["Relatório\nISO 25010"]
+        DYN["Análise Dinâmica\n(K6 + @Observed)"]
+    end
+
+    SRC --> RS --> PMD --> CSV --> TAB
+    SRC --> TEST --> ARCH --> LOG --> TAB
+    TAB --> ISO
+    TAB --> DYN
 ```
 
 ---
 
 ## 2. Mapeamento ISO 25010 → Ferramentas
 
-| Subcaracterística ISO 25010 | Métrica / Code Smell | Ferramenta | Regra / Método |
-|---|---|---|---|
-| **Modularidade** | God Class | PMD | `GodClass` |
-| **Modularidade** | LOC (Excessive Class) | PMD | `ExcessiveClassLength` (XPath) |
-| **Analisabilidade** | Long Method | PMD | `NcssCount` + `ExcessiveMethodLength` (XPath) |
-| **Analisabilidade** | Complexidade Ciclomática | PMD | `CyclomaticComplexity` |
-| **Analisabilidade** | Feature Envy | PMD | `LawOfDemeter` |
-| **Modularidade** | Data Class | PMD | `DataClass` |
-| **Modularidade** | CBO (Coupling Between Objects) | PMD | `CouplingBetweenObjects` |
-| **Modularidade** | Dispersed Coupling | ArchUnit | Isolamento de camadas |
-| **Modificabilidade** | Shotgun Surgery | ArchUnit | Regras ascendência Service→Controller |
-| **Modularidade** | Acoplamento Cíclico | ArchUnit | `slices().beFreeOfCycles()` |
-| **Reusabilidade** | Ca (Fan-In) / Ce (Fan-Out) | ArchUnit | `ArchitectureMetrics` |
+A ISO/IEC 25010 define Manutenibilidade como composta por 5 subcaracterísticas. Cada regra de análise estática é mapeada para a subcaracterística que ela protege:
+
+| Subcaracterística | Métrica / Code Smell | Ferramenta | Regra | Referência Teórica |
+|---|---|---|---|---|
+| **Modularidade** | God Class | PMD | `GodClass` | Fowler (2018): "uma classe que tenta fazer demais" |
+| **Modularidade** | LOC (Excessive Class) | PMD | XPath custom | Martin (2008): classes > 300 LOC violam SRP |
+| **Analisabilidade** | Long Method | PMD | `NcssCount` + XPath | Fowler (2018): "extrair método" como refatoração primária |
+| **Analisabilidade** | Complexidade Ciclomática | PMD | `CyclomaticComplexity` | McCabe (1976): CC > 10 = alto risco de erro |
+| **Analisabilidade** | Feature Envy | PMD | `LawOfDemeter` | Gamma et al. (1995): princípio do menor conhecimento |
+| **Modularidade** | Data Class | PMD | `DataClass` | Fowler (2018): "classes que são apenas containers de dados" |
+| **Modularidade** | CBO | PMD | `CouplingBetweenObjects` | Chidamber & Kemerer (1994): CBO alto = difícil de manter |
+| **Modularidade** | Dispersed Coupling | ArchUnit | Isolamento de camadas | Richards e Ford (2020): acoplamento aferente/eferente |
+| **Modificabilidade** | Shotgun Surgery | ArchUnit | Service ✗→ Controller | Fowler (2018): "uma mudança requer alteração em muitas classes" |
+| **Modularidade** | Acoplamento Cíclico | ArchUnit | `beFreeOfCycles()` | Ford et al. (2021): ciclos impedem decomposição |
+| **Reusabilidade** | Ca/Ce (Fan-In/Out) | ArchUnit | `ArchitectureMetrics` | Martin (2003): princípio da estabilidade |
 
 ---
 
-## 3. PMD – Configuração Microestrutural
+## 3. PMD — Configuração Microestrutural
 
-### 3.1. Arquivo `ruleset.xml`
+### 3.1. Fundamentação dos Limiares
 
-Localização: raiz do projeto (`/ruleset.xml`)
+Os limiares não são arbitrários — cada um tem respaldo na literatura de engenharia de software:
 
-**Regras ativas:**
-
-| # | Regra PMD | Code Smell Mapeado | Tipo | Limiar |
-|---|---|---|---|---|
-| 1 | `GodClass` | God Class | Built-in | WMC/ATFD/TCC defaults |
-| 2 | `NcssCount` | Long Method | Built-in | method=40, class=500 |
-| 3 | `ExcessiveMethodLength` | Long Method (LOC) | XPath custom | >50 linhas |
-| 4 | `LawOfDemeter` | Feature Envy | Built-in | Defaults |
-| 5 | `DataClass` | Data Class | Built-in | WOC/NOPA/NOAM/WMC |
-| 6 | `CyclomaticComplexity` | CC | Built-in | method=10, class=80 |
-| 7 | `CouplingBetweenObjects` | CBO | Built-in | threshold=20 |
-| 8 | `ExcessiveClassLength` | LOC | XPath custom | >300 linhas |
-
-> **Nota**: As regras `ExcessiveMethodLength` e `ExcessiveClassLength` foram removidas no PMD 7.x.
-> Reimplementadas via XPath: `//MethodDeclaration[@EndLine - @BeginLine > 50]` e
-> `//TypeDeclaration[@EndLine - @BeginLine > 300]`.
-
-### 3.2a. Fundamentação Acadêmica dos Limiares
-
-| Métrica | Limiar | Referência Acadêmica |
+| Métrica | Limiar | Referência |
 |---|---|---|
-| **CC** (Complexidade Ciclomática) | ≤ 10 por método | McCabe, T. J. (1976). *"A Complexity Measure"*. IEEE Transactions on Software Engineering, SE-2(4), pp. 308–320. |
-| **CBO** (Coupling Between Objects) | ≤ 20 por classe | Chidamber, S. R.; Kemerer, C. F. (1994). *"A Metrics Suite for Object-Oriented Design"*. IEEE TSE, 20(6), pp. 476–493. Valor conservador alinhado a Lanza, M.; Marinescu, R. (2006). *"Object-Oriented Metrics in Practice"*, Springer. |
-| **LOC** (Excessive Class Length) | ≤ 300 linhas | Martin, R. C. (2008). *"Clean Code: A Handbook of Agile Software Craftsmanship"*. Prentice Hall. |
-| **LOC** (Excessive Method Length) | ≤ 50 linhas | Fowler, M. (2018). *"Refactoring: Improving the Design of Existing Code"*, 2nd ed. Addison-Wesley. |
-| **NCSS** (Method) | ≤ 40 statements | Basili, V. R.; Briand, L. C.; Melo, W. L. (1996). *"A Validation of OO Design Metrics as Quality Indicators"*. IEEE TSE, 22(10), pp. 751–761. |
+| **CC** (Complexidade Ciclomática) | ≤ 10 por método | McCabe, T. J. (1976). *A Complexity Measure*. IEEE TSE, SE-2(4), pp. 308–320 |
+| **CBO** (Coupling Between Objects) | ≤ 20 por classe | Chidamber, S. R.; Kemerer, C. F. (1994). *A Metrics Suite for OO Design*. IEEE TSE, 20(6). Valor conservador alinhado a Lanza & Marinescu (2006) |
+| **LOC** (Classe) | ≤ 300 linhas | Martin, R. C. (2008). *Clean Code*. Prentice Hall |
+| **LOC** (Método) | ≤ 50 linhas | Fowler, M. (2018). *Refactoring*, 2nd ed. |
+| **NCSS** (Method) | ≤ 40 statements | Basili, V. R. et al. (1996). *A Validation of OO Design Metrics*. IEEE TSE, 22(10) |
+
+> **Nota sobre PMD 7.x:** As regras `ExcessiveMethodLength` e `ExcessiveClassLength` foram removidas no PMD 7. Foram reimplementadas via XPath: `//MethodDeclaration[@EndLine - @BeginLine > 50]` e `//TypeDeclaration[@EndLine - @BeginLine > 300]`.
 
 ### 3.2. Plugin Maven
 
@@ -99,157 +106,111 @@ Localização: raiz do projeto (`/ruleset.xml`)
 ### 3.3. Comando de Execução
 
 ```bash
-./mvnw clean compile pmd:pmd
+./mvnw clean compile pmd:pmd       # Gera CSV
+./mvnw pmd:check -Dpmd.logViolationsToConsole=true  # Visualiza no terminal
 ```
-
-**Output**: `target/site/pmd.csv`
-
-### 3.4. Estrutura do CSV
-
-```
-"Problem","Package","File","Priority","Line","Description","Rule set","Rule"
-```
-
-Cada linha contém uma violação detectada com:
-- Nome da regra violada
-- Arquivo e linha
-- Descrição com valores brutos (WOC, NOPA, NOAM, WMC, CBO, etc.)
 
 ---
 
-## 4. ArchUnit – Configuração Macro-Arquitetural
+## 4. ArchUnit — Configuração Macro-Arquitetural
 
-### 4.1. Dependência
+### 4.1. Regras Implementadas
 
-```xml
-<dependency>
-    <groupId>com.tngtech.archunit</groupId>
-    <artifactId>archunit-junit5</artifactId>
-    <version>1.3.0</version>
-    <scope>test</scope>
-</dependency>
-```
+#### Isolamento de Camadas
 
-### 4.2. Classe de Teste
+Cada regra protege um invariante arquitetural, alinhado com o princípio de Richards e Ford (2020) de que "dependências devem seguir a direção da abstração":
 
-**Localização**: `src/test/java/org/springframework/samples/petclinic/architecture/ValidacaoArquiteturalTest.java`
-
-### 4.3. Regras Implementadas
-
-#### 4.3.1. Isolamento de Camadas (Dispersed Coupling / Shotgun Surgery)
-
-| Regra | Verificação | Mitigação |
+| Regra | Verificação | Subcaracterística ISO 25010 |
 |---|---|---|
-| `controllers_nao_acessam_repositories` | Controller ✗→ Repository | Dispersed Coupling |
-| `repositories_nao_acessam_controllers` | Repository ✗→ Controller | Inversão de dependência |
-| `repositories_nao_acessam_services` | Repository ✗→ Service | Camada mais interna isolada |
-| `services_nao_acessam_controllers` | Service ✗→ Controller | Shotgun Surgery |
-| `model_nao_depende_de_camadas_superiores` | Model ✗→ Controller/Service/Repository/Config | DDD: domínio puro |
+| `controllers_nao_acessam_repositories` | Controller ✗→ Repository | Modularidade |
+| `repositories_nao_acessam_controllers` | Repository ✗→ Controller | Modularidade |
+| `repositories_nao_acessam_services` | Repository ✗→ Service | Modularidade |
+| `services_nao_acessam_controllers` | Service ✗→ Controller | Modificabilidade |
+| `model_nao_depende_de_camadas_superiores` | Model ✗→ tudo | Modularidade (DDD) |
 
-#### 4.3.2. Acoplamento Cíclico
-
-Verifica ausência de dependências circulares entre pacotes de negócio,
-excluindo dependências de/para pacotes gerados automaticamente (`rest.dto`, `rest.api`)
-que não representam débito técnico estrutural:
+#### Acoplamento Cíclico
 
 ```java
 slices()
-    .matching("org.springframework.samples.petclinic.(*)..")
+    .matching("org.springframework.samples.petclinic.(*)..") 
     .should().beFreeOfCycles()
     .ignoreDependency(resideInAPackage("..mapper.."), resideInAPackage("..rest.dto.."))
     .ignoreDependency(resideInAPackage("..mapper.."), resideInAPackage("..rest.api.."))
 ```
 
-#### 4.3.3. Métricas de Acoplamento (Ca/Ce)
+> O ciclo `mapper ↔ rest.dto` é excluído porque os DTOs são **gerados** pelo OpenAPI Generator — não representam débito técnico da lógica de negócios. Ford et al. (2021) distinguem "acoplamento acidental" (geração de código) de "acoplamento essencial" (decisão de design).
 
-O método `extrairMetricasAcoplamento()` usa `ArchitectureMetrics.componentDependencyMetrics()` para calcular:
+#### Métricas Ca/Ce
 
-| Métrica | Significado | Fórmula |
+| Métrica | Significado | Interpretação (Richards e Ford, 2020) |
 |---|---|---|
-| **Ca** (Afferent Coupling) | Fan-In: quantos pacotes dependem deste | Contagem direta |
-| **Ce** (Efferent Coupling) | Fan-Out: de quantos pacotes este depende | Contagem direta |
-| **I** (Instability) | Instabilidade | Ce / (Ca + Ce) |
-| **A** (Abstractness) | Grau de abstração | Interfaces / Total classes |
-
-### 4.4. Comando de Execução
-
-```bash
-# Todos os testes ArchUnit
-./mvnw test -Dtest="ValidacaoArquiteturalTest" -Dsurefire.useFile=false
-
-# Apenas métricas de acoplamento
-./mvnw test -Dtest="ValidacaoArquiteturalTest#extrairMetricasAcoplamento" -Dsurefire.useFile=false
-```
+| **Ca** (Afferent) | Quantos pacotes dependem deste | Alto Ca = componente estável (difícil de mudar sem impacto) |
+| **Ce** (Efferent) | De quantos pacotes este depende | Alto Ce = componente instável (sensível a mudanças externas) |
+| **I** = Ce/(Ca+Ce) | Instabilidade | I=0 (máxima estabilidade) a I=1 (máxima instabilidade) |
 
 ---
 
-## 5. Resultados Baseline (Pré-Refatoração)
+## 5. Resultados do Código Original (Fork)
 
-### 5.1. PMD – Violações Detectadas (12 totais)
+Os resultados abaixo refletem o estado do código **como herdado do fork** upstream, sem nenhuma alteração de lógica de negócio. Eles servem como registro das características estruturais do projeto original, validando que as ferramentas de análise estão corretamente configuradas.
 
-| # | Classe | Regra | Detalhe |
-|---|---|---|---|
-| 1 | `Person` | DataClass | WOC=0.0%, NOAM=4, WMC=4 |
-| 2 | `Pet` | DataClass | WOC=27.3%, NOAM=8, WMC=12 |
-| 3 | `Role` | DataClass | WOC=0.0%, NOAM=4, WMC=4 |
-| 4 | `User` | DataClass | WOC=11.1%, NOAM=8, WMC=10 |
-| 5 | `Visit` | DataClass | WOC=0.0%, NOAM=6, WMC=7 |
-| 6 | `JdbcPet` | DataClass | WOC=0.0%, NOAM=4, WMC=4 |
-| 7-9 | `JpaOwnerRepositoryImpl` | LawOfDemeter | `getSingleResult` on foreign value (×3) |
-| 10 | `BindingError` | DataClass | WOC=20.0%, NOAM=4, WMC=6 |
-| 11 | `OwnerRestController` | CouplingBetweenObjects | CBO=23 (limiar: 20) |
-| 12 | `ClinicServiceImpl` | CouplingBetweenObjects | CBO=24 (limiar: 20) |
+### 5.1. PMD — Violações Detectadas (12 totais)
 
-### 5.2. ArchUnit – Métricas de Acoplamento
-
-| Pacote | Ca (Fan-In) | Ce (Fan-Out) | I (Instabilidade) | A (Abstração) |
+| # | Classe | Regra | Detalhe | Interpretação |
 |---|---|---|---|---|
-| `model` | 5 | 0 | 0.000 | 0.000 |
-| `rest` | 1 | 3 | 0.750 | 0.263 |
-| `service` | 1 | 2 | 0.667 | 0.500 |
-| `repository` | 1 | 2 | 0.667 | 0.462 |
-| `mapper` | 1 | 2 | 0.667 | 0.500 |
-| `util` | 1 | 1 | 0.500 | 0.500 |
-| `config` | 0 | 0 | 1.000 | 0.000 |
-| `security` | 0 | 0 | 1.000 | 0.000 |
+| 1–5 | Person, Pet, Role, User, Visit | DataClass | WOC baixo, NOAM alto | Entidades JPA são Data Classes por design — não necessariamente um problema, mas indica baixa coesão funcional (Fowler, 2018) |
+| 6 | JdbcPet | DataClass | WOC=0.0% | Classe auxiliar da implementação JDBC — irrelevante para o perfil ativo (spring-data-jpa) |
+| 7–9 | JpaOwnerRepositoryImpl | LawOfDemeter | `getSingleResult` on foreign value (×3) | Violação do princípio do menor conhecimento: o repositório navega grafos de objetos ao invés de usar queries diretas |
+| 10 | BindingError | DataClass | WOC=20.0% | DTO de validação — Data Class por definição |
+| 11 | OwnerRestController | CBO=23 | Limiar: 20 | Controller depende de 23 tipos distintos — reflexo da API ampla |
+| 12 | **ClinicServiceImpl** | **CBO=24** | **Limiar: 20** | **Façade com 6 repositórios injetados. Característica herdada do projeto original.** |
 
-### 5.3. ArchUnit – Status das Regras
+> **Observação:** O `ClinicServiceImpl` é a classe com maior CBO e é também o ponto central de instrumentação `@Observed`. Independente da estratégia experimental adotada (refatoração do código existente ou injeção de anomalias adicionais), essa classe será o principal alvo de análise de correlação estática ↔ dinâmica.
 
-| Regra | Status | Observação |
-|---|---|---|
-| Controllers ✗→ Repositories | ✅ PASS | Isolamento respeitado |
-| Repositories ✗→ Controllers | ✅ PASS | Isolamento respeitado |
-| Repositories ✗→ Services | ✅ PASS | Isolamento respeitado |
-| Services ✗→ Controllers | ✅ PASS | Isolamento respeitado |
-| Model ✗→ Camadas superiores | ✅ PASS | DDD respeitado |
-| Ausência de Ciclos | ✅ PASS | Dependências para DTOs gerados excluídas via `ignoreDependency` |
+### 5.2. ArchUnit — Métricas de Acoplamento por Pacote (código original)
 
-> **Nota**: O ciclo estrutural `mapper ↔ rest` (Mappers dependem de DTOs gerados pelo OpenAPI Generator
-> em `rest.dto`/`rest.api`) foi excluído da verificação via `ignoreDependency()`, pois não representa
-> débito técnico da lógica de negócios. Apenas ciclos entre pacotes **core** (service, repository,
-> controller, model) são avaliados.
+| Pacote | Ca | Ce | I (Instabilidade) | A (Abstração) | Análise |
+|---|---|---|---|---|---|
+| `model` | 5 | 0 | 0.000 | 0.000 | Máxima estabilidade — dependido por todos, depende de ninguém |
+| `rest` | 1 | 3 | 0.750 | 0.263 | Alta instabilidade — esperado para camada de borda |
+| `service` | 1 | 2 | 0.667 | 0.500 | Balanceado — mas Ce=2 baixo mascara o CBO=24 interno |
+| `repository` | 1 | 2 | 0.667 | 0.462 | Abstração razoável (interfaces + implementações) |
+| `config` | 0 | 0 | 1.000 | 0.000 | Isolado — correto para configuração |
+
+### 5.3. ArchUnit — Status das Regras
+
+| Regra | Status |
+|---|---|
+| Controllers ✗→ Repositories | ✅ PASS |
+| Repositories ✗→ Controllers | ✅ PASS |
+| Repositories ✗→ Services | ✅ PASS |
+| Services ✗→ Controllers | ✅ PASS |
+| Model ✗→ Camadas superiores | ✅ PASS |
+| Ausência de Ciclos | ✅ PASS |
+
+> Todas as regras passam, confirmando que o débito técnico do código original é **intra-classe** (CBO, Data Class) e não **inter-pacote** (ciclos, inversão de camadas). Essa distinção é relevante para o TCC: demonstra que as características estruturais de interesse residem no nível micro (design de classe), não no nível macro (arquitetura de pacotes).
 
 ---
 
 ## 6. Comandos Resumo
 
 ```bash
-# 1. Análise PMD completa (gera CSV)
+# PMD completa (gera CSV)
 ./mvnw clean compile pmd:pmd
 
-# 2. Visualizar violações PMD diretamente no terminal
+# Violações no terminal
 ./mvnw pmd:check -Dpmd.logViolationsToConsole=true
 
-# 3. Formatar CSV no terminal (Linux/bash)
+# Formatar CSV
 column -s, -t target/site/pmd.csv
 
-# 4. Testes ArchUnit (validação + métricas)
+# ArchUnit (validação + métricas)
 ./mvnw test -Dtest="ValidacaoArquiteturalTest" -Dsurefire.useFile=false
 
-# 5. Apenas métricas Ca/Ce
+# Apenas métricas Ca/Ce
 ./mvnw test -Dtest="ValidacaoArquiteturalTest#extrairMetricasAcoplamento" -Dsurefire.useFile=false
 
-# 6. Build completo (PMD + testes separados para evitar interrupção)
+# Build completo
 ./mvnw compile pmd:pmd && ./mvnw test -Dsurefire.useFile=false
 ```
 
@@ -263,3 +224,18 @@ column -s, -t target/site/pmd.csv
 | `pom.xml` | Modificado | Plugin PMD + dependência ArchUnit |
 | `ValidacaoArquiteturalTest.java` | Criado | Testes ArchUnit (camadas + ciclos + métricas) |
 | `docs/analise-estatica-iso25010.md` | Criado | Esta documentação |
+
+---
+
+## Referências
+
+- McCabe, T. J. (1976). *A Complexity Measure*. IEEE TSE, SE-2(4).
+- Chidamber, S. R.; Kemerer, C. F. (1994). *A Metrics Suite for OO Design*. IEEE TSE, 20(6).
+- Gamma, E. et al. (1995). *Design Patterns*. Addison-Wesley.
+- Basili, V. R. et al. (1996). *A Validation of OO Design Metrics*. IEEE TSE, 22(10).
+- Lanza, M.; Marinescu, R. (2006). *Object-Oriented Metrics in Practice*. Springer.
+- Martin, R. C. (2008). *Clean Code*. Prentice Hall.
+- Fowler, M. (2018). *Refactoring*, 2nd ed. Addison-Wesley.
+- Richards, M.; Ford, N. (2020). *Fundamentals of Software Architecture*. O'Reilly.
+- Ford, N.; Richards, M. et al. (2021). *Software Architecture: The Hard Parts*. O'Reilly.
+- Elemar Jr. *Manual do Arquiteto de Software*. https://elemarjr.com

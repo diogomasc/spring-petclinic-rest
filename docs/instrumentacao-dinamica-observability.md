@@ -3,6 +3,13 @@
 Documentação técnica do mapeamento de métricas granulares da API Spring PetClinic REST.  
 O objetivo é rastrear a latência em diferentes camadas (Controller, Service) para correlacionar gargalos dinâmicos (como N+1 e contenção de banco) com métricas de análise estática (CC, CBO, LCOM).
 
+> **Documentos complementares:**
+> - [Referência Técnica](referencia-tecnica-petclinic.md) — Visão geral da aplicação, padrões de projeto (Facade, Strategy), e contexto do TCC
+> - [Análise Estática ISO 25010](analise-estatica-iso25010.md) — Regras PMD, testes ArchUnit, baseline de violações
+> - [Prometheus + Micrometer](../../infra/docs/guides/prometheus-micrometer.md) — Modelo de dados, PromQL de referência, cardinalidade
+> - [K6 Load Testing](../../infra/docs/guides/k6-load-testing.md) — Perfil de carga, thresholds, relação K6 ↔ @Observed
+> - [Grafana](../../infra/docs/guides/grafana.md) — Dashboard @Observed, interpretação de painéis, exportação de dados
+
 ---
 
 ## 1. Visão Geral da Instrumentação Granular
@@ -220,21 +227,21 @@ A granularidade Controller + Service satisfaz os três critérios. Adicionar o R
 
 ### 5.1. O que Estamos Medindo
 
-No contexto deste TCC, os _code smells_ (N+1, EAGER em cascata, alto CBO no `ClinicServiceImpl`, God Class no façade) **não são bugs funcionais**. São anomalias arquiteturais que a análise estática detecta (SonarQube: CC, CBO, TDR) mas que os testes unitários aprovam com 100% de sucesso.
+No contexto deste TCC, os _code smells_ (N+1, EAGER em cascata, alto CBO no `ClinicServiceImpl`, God Class no façade) **não são bugs funcionais**. São características estruturais herdadas do código original do fork que a análise estática detecta (PMD: CC, CBO; ArchUnit: Ca/Ce — ver [análise estática](analise-estatica-iso25010.md)) mas que os testes unitários aprovam com 100% de sucesso. Elemar Jr. reforça que "métricas estáticas são diagnósticos, não sentenças — o impacto real só se revela sob carga".
 
-O experimento manipula o código propositalmente:
+O experimento opera em duas fases de coleta com intervenção no código entre elas:
 
 ```mermaid
 flowchart TD
-    subgraph BASELINE["Fase 1: Baseline (código atual)"]
-        B_STATIC["Análise Estática\n(SonarQube)"]
+    subgraph BASELINE["Fase 1: Coleta sobre código de referência"]
+        B_STATIC["Análise Estática\n(PMD + ArchUnit)"]
         B_DYNAMIC["Análise Dinâmica\n(K6 + Prometheus)"]
         B_STATIC --> B_CORR["Correlação\nCC ↔ p95 latência"]
         B_DYNAMIC --> B_CORR
     end
 
-    subgraph REFACTORED["Fase 2: Pós-Refatoração"]
-        R_STATIC["Análise Estática\n(SonarQube)"]
+    subgraph REFACTORED["Fase 2: Coleta pós-intervenção"]
+        R_STATIC["Análise Estática\n(PMD + ArchUnit)"]
         R_DYNAMIC["Análise Dinâmica\n(K6 + Prometheus)"]
         R_STATIC --> R_CORR["Correlação\nCC ↔ p95 latência"]
         R_DYNAMIC --> R_CORR
@@ -249,7 +256,7 @@ flowchart TD
 
 **Fowler (2018)** distingue *refactoring* de *performance optimization*: refatorar melhora a estrutura interna sem alterar o comportamento observável. O TCC investiga se essa melhoria estrutural tem efeito colateral mensurável no comportamento dinâmico — o que Fowler admite como possível mas "raramente linear".
 
-**Richards e Ford (2020)** argumentam que acoplamento aferente (Ca) e eferente (Ce) — métricas que o SonarQube calcula como CBO — são *leading indicators* de degradação. Um `ClinicServiceImpl` com CBO alto (dependência de 6 repositórios) é, por definição, um ponto de contenção transacional. O `@Observed` no Service mede exatamente essa contenção.
+**Richards e Ford (2020)** argumentam que acoplamento aferente (Ca) e eferente (Ce) — métricas que o PMD/ArchUnit calculam como CBO e Ca/Ce — são *leading indicators* de degradação. Um `ClinicServiceImpl` com CBO alto (dependência de 6 repositórios) é, por definição, um ponto de contenção transacional. O `@Observed` no Service mede exatamente essa contenção.
 
 **Ford, Richards et al. (2021)** em *As Partes Difíceis* discutem o conceito de *quantum arquitetural*: a menor unidade deployável que possui alta coesão funcional. No PetClinic monolítico, o quantum é a aplicação inteira, e o `ClinicServiceImpl` é o *hub* que conecta todos os domínios. Refatorar esse façade (ex: extrair `OwnerService`, `VetService`) reduz o CBO e potencialmente a contenção — hipótese testável com nossas métricas.
 
