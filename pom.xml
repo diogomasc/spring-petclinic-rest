@@ -33,6 +33,7 @@
         <maven.jxr-plugin.version>3.6.0</maven.jxr-plugin.version>
         <maven.license-plugin.version>2.7.1</maven.license-plugin.version>
         <maven.openapi-generator-plugin.version>7.22.0</maven.openapi-generator-plugin.version>
+        <maven.pmd-plugin.version>3.26.0</maven.pmd-plugin.version>
         <maven.project-info-reports-plugin.version>3.9.0</maven.project-info-reports-plugin.version>
         <maven.rat-plugin.version>0.18</maven.rat-plugin.version>
         <maven.refactor-first-plugin.version>0.8.0</maven.refactor-first-plugin.version>
@@ -40,6 +41,9 @@
         <maven.site-plugin.version>3.21.0</maven.site-plugin.version>
         <maven.spotbugs-plugin.version>4.8.6.6</maven.spotbugs-plugin.version>
         <maven.version>3.9.9</maven.version>
+
+        <!-- ArchUnit -->
+        <archunit.version>1.3.0</archunit.version>
 
         <!-- Docker -->
         <docker.jib-maven-plugin.version>3.5.1</docker.jib-maven-plugin.version>
@@ -141,6 +145,15 @@
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- ── ArchUnit (Análise Macro-Arquitetural) ──────────────────── -->
+        <!-- Testes de isolamento de camadas, ciclos e métricas Ca/Ce     -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <version>${archunit.version}</version>
             <scope>test</scope>
         </dependency>
 
@@ -486,6 +499,30 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- ── PMD Maven Plugin (Análise Microestrutural) ────────── -->
+            <!-- Gera relatório CSV em target/site/pmd.csv                 -->
+            <!-- Roda: mvnw.cmd clean compile pmd:pmd                      -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-pmd-plugin</artifactId>
+                <version>${maven.pmd-plugin.version}</version>
+                <configuration>
+                    <rulesets>
+                        <ruleset>${project.basedir}/ruleset.xml</ruleset>
+                    </rulesets>
+                    <targetJdk>${java.version}</targetJdk>
+                    <failOnViolation>false</failOnViolation>
+                    <printFailingErrors>true</printFailingErrors>
+                    <linkXRef>false</linkXRef>
+                    <format>csv</format>
+                    <targetDirectory>${project.build.directory}/site</targetDirectory>
+                    <!-- Exclui código gerado pelo OpenAPI Generator -->
+                    <excludeRoots>
+                        <excludeRoot>${project.build.directory}/generated-sources</excludeRoot>
+                    </excludeRoots>
+                </configuration>
+            </plugin>
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-site-plugin</artifactId>
