@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>org.springframework.samples</groupId>
@@ -14,7 +15,7 @@
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
         <version>4.0.6</version>
-        <relativePath/> <!-- lookup parent from Maven repository -->
+        <relativePath /> <!-- lookup parent from Maven repository -->
     </parent>
 
     <properties>
@@ -49,9 +50,9 @@
         <docker.jib-maven-plugin.version>3.5.1</docker.jib-maven-plugin.version>
         <docker.image.prefix>springcommunity</docker.image.prefix>
 
-        <!-- SonarQube configuration (local) -->
-        <sonar.projectKey>spring-petclinic-rest</sonar.projectKey>
-        <sonar.host.url>http://localhost:9000</sonar.host.url>
+        <!-- SonarQube configuration -->
+        <sonar.organization>spring-petclinic-rest</sonar.organization>
+        <sonar.host.url>https://sonarcloud.io</sonar.host.url>
 
     </properties>
 
@@ -294,13 +295,6 @@
                 </executions>
             </plugin>
 
-            <!-- ── SonarQube Maven Plugin ─────────────────────────────── -->
-            <!-- Roda: mvn sonar:sonar -Dsonar.token=<token>               -->
-            <plugin>
-                <groupId>org.sonarsource.scanner.maven</groupId>
-                <artifactId>sonar-maven-plugin</artifactId>
-                <version>4.0.0.4121</version>
-            </plugin>
 
             <plugin>
                 <groupId>org.jacoco</groupId>
@@ -351,11 +345,7 @@
                             <goal>report</goal>
                         </goals>
                         <configuration>
-                            <formats>
-                                <!-- XML format for SonarCloud -->
-                                <!-- https://docs.sonarsource.com/sonarqube-cloud/enriching/test-coverage/java-test-coverage/ -->
-                                <format>XML</format>
-                            </formats>
+                            <!-- Formato padrão do JaCoCo mantido para relatórios HTML -->
                         </configuration>
                     </execution>
                 </executions>
@@ -392,7 +382,8 @@
                             <generatorName>spring</generatorName>
                             <library>spring-boot</library>
 
-                            <!-- Only enabling model andopenapi-generator-maven-plugin API generation -->
+                            <!-- Only enabling model andopenapi-generator-maven-plugin API
+                            generation -->
                             <modelNameSuffix>Dto</modelNameSuffix>
                             <apiPackage>org.springframework.samples.petclinic.rest.api</apiPackage>
                             <generateModels>true</generateModels>
@@ -402,7 +393,8 @@
                                 <importMapping>Nullable=org.jspecify.annotations.Nullable</importMapping>
                             </importMappings>
                             <configOptions>
-                                <!-- RestController implementation is provided by Petclinic developers -->
+                                <!-- RestController implementation is provided by Petclinic
+                                developers -->
                                 <interfaceOnly>true</interfaceOnly>
                                 <!-- Activating Java 8 features -->
                                 <performBeanValidation>true</performBeanValidation>
@@ -477,7 +469,8 @@
                         <configuration>
                             <rules>
                                 <requireJavaVersion>
-                                    <message>This build requires at least Java ${java.version}, update your JVM, and run the build again
+                                    <message>This build requires at least Java ${java.version},
+                                        update your JVM, and run the build again
                                     </message>
                                     <version>[${java.version},)</version>
                                 </requireJavaVersion>
