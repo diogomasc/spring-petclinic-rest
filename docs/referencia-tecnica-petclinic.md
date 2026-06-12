@@ -1,8 +1,8 @@
-# LEIAME — Spring PetClinic REST (TCC)
+# Referência Técnica — Spring PetClinic REST (TCC)
 
 ## Visão Geral
 
-O **Spring PetClinic REST** é uma aplicação de referência que expõe uma API REST completa para gerenciamento de uma clínica veterinária. Neste TCC, o projeto serve como **objeto de estudo** para análise de métricas de refatoração: é analisado estaticamente (SonarQube, SpotBugs, JaCoCo) e dinamicamente (K6, Prometheus, Grafana) antes e depois de refatorações.
+O **Spring PetClinic REST** é uma aplicação de referência que expõe uma API REST completa para gerenciamento de uma clínica veterinária. Neste TCC, o projeto serve como **objeto de estudo** para análise de métricas de refatoração: é analisado estaticamente (PMD, ArchUnit) e dinamicamente (K6, Prometheus, Grafana) antes e depois de refatorações.
 
 | Atributo | Valor |
 |---|---|
@@ -21,6 +21,7 @@ O **Spring PetClinic REST** é uma aplicação de referência que expõe uma API
 ```
 spring-petclinic-rest/
 ├── pom.xml                          # Dependências e plugins Maven
+├── ruleset.xml                      # Ruleset PMD 7.x (ISO 25010)
 ├── src/
 │   ├── main/
 │   │   ├── java/.../petclinic/
@@ -64,12 +65,16 @@ spring-petclinic-rest/
 │   │       └── db/h2/schema.sql + data.sql   # DDL + seed data
 │   └── test/
 │       ├── java/.../petclinic/
+│       │   ├── architecture/          # Testes ArchUnit (ISO 25010)
+│       │   │   └── ValidacaoArquiteturalTest.java
 │       │   ├── rest/controller/      # Testes dos controllers (MockMvc)
 │       │   ├── service/clinicService/ # Testes do service (vários backends)
 │       │   ├── service/userService/   # Testes do UserService
 │       │   └── model/                # Testes de validação
 │       ├── jmeter/                   # Benchmark JMeter (referência)
 │       └── postman/                  # Coleção Postman para regressão
+├── docs/
+│   └── analise-estatica-iso25010.md  # Documentação detalhada PMD + ArchUnit
 ```
 
 ---
@@ -343,16 +348,61 @@ Base URL: `http://localhost:9966/petclinic/api`
 
 ## Endpoints Críticos para Análise Dinâmica
 
-Os endpoints abaixo foram selecionados para o teste de carga K6 por representarem as operações mais relevantes para a análise de correlação estática ↔ dinâmica:
+Os endpoints abaixo foram selecionados para o teste de carga K6 por representarem as operações mais relevantes para a análise de correlação estática ↔ dinâmica.
 
-| Endpoint | Por que é crítico? | Risco sob estresse |
-|---|---|---|
-| `GET /owners` | **Carga N+1**: `Owner` carrega `Set<Pet>` com `FetchType.EAGER`, que por sua vez carrega `Set<Visit>` EAGER. Listar todos os owners executa cascata de queries | Latência cresce com volume de dados |
-| `POST /owners` | **Write-path completo**: validação → mapeamento → JPA persist → flush. Transação completa | Contenção de locks no banco |
-| `GET /owners/{id}` | **Consulta com grafo**: retorna owner + pets + visits aninhados. Potencial N+1 se não otimizado | Latência proporcional ao nº de pets/visits |
-| `POST /owners/{id}/pets` | **Cascata JPA**: `CascadeType.ALL` no `Pet.type` pode causar side-effects inesperados. `savePet()` faz lookup de `PetType` antes de salvar | Falha silenciosa se type_id inválido |
-| `POST /visits` | **Inserção em tabela filha**: criação de visit requer lookup do pet, potencial lock no owner pai via foreign key | Deadlock sob alta concorrência |
-| `GET /vets` | **Relação N:M**: `Vet` → `Specialty` via `@ManyToMany EAGER` + tabela de junção `vet_specialties`. Grafo de objetos denso | Memory pressure com muitos vets |
+### Critérios de Seleção
+
+A escolha dos endpoints para teste de carga segue dois critérios fundamentais:
+
+1. **Criticidade para o negócio**: São endpoints que, em um cenário real de produção, seriam os mais acessados por usuários e integrações. A degradação destes impacta diretamente a percepção de qualidade dos stakeholders que dependem do sistema.
+2. **Sensibilidade ao débito técnico**: São endpoints cuja implementação atravessa camadas com alta complexidade (CC, CBO) — portanto, candidatos naturais para evidenciar diferença de desempenho entre código "sujo" (baseline) e código "limpo" (pós-refatoração).
+
+### Fluxo de Decisão: Por que estes endpoints?
+
+```mermaid
+flowchart TB
+    START(["Todos os endpoints da API"]) --> F1{"É operação\ndo core path?\n(Owner/Pet/Visit/Vet)"}
+
+    F1 -->|Não| EXCL["❌ EXCLUÍDO\n(PetTypes, Specialties)\nCRUD trivial, lookup simples\nBaixo potencial de anomalia"]
+
+    F1 -->|Sim| F2{"Traversa grafo\nJPA complexo?\n(EAGER, N+1, cascata)"}
+
+    F2 -->|Sim| F3{"Alta demanda\nem cenário real?\n(>80% tráfego = leitura)"}
+
+    F2 -->|Não| F4{"Envolve write-path\ncompleto?\n(validação→persist→flush)"}
+
+    F3 -->|Sim| SEL_READ["✅ SELECIONADO\nGET /owners\nGET /owners/{id}\nGET /vets"]
+
+    F3 -->|Não| F4
+
+    F4 -->|Sim| SEL_WRITE["✅ SELECIONADO\nPOST /owners\nPOST /owners/{id}/pets\nPOST /visits"]
+
+    F4 -->|Não| EXCL2["❌ EXCLUÍDO\nOperação simples\nSem traversal JPA"]
+
+    SEL_READ --> IMPACT["🔬 Análise de Impacto\nCódigo sujo → latência alta\nCódigo limpo → latência esperada"]
+    SEL_WRITE --> IMPACT
+
+    IMPACT --> METRIC["📊 Métricas Coletadas\np50 / p95 / p99 latência\nThroughput (req/s)\nTaxa de erro (%)"]
+
+    style START fill:#1a1a2e,stroke:#e94560,color:#fff
+    style EXCL fill:#2d2d2d,stroke:#666,color:#aaa
+    style EXCL2 fill:#2d2d2d,stroke:#666,color:#aaa
+    style SEL_READ fill:#0f3460,stroke:#16c79a,color:#fff
+    style SEL_WRITE fill:#0f3460,stroke:#e94560,color:#fff
+    style IMPACT fill:#1a1a2e,stroke:#f5a623,color:#fff
+    style METRIC fill:#1a1a2e,stroke:#16c79a,color:#fff
+```
+
+### Mapeamento Endpoint → Risco → Impacto
+
+| Endpoint | Por que é crítico? | Risco sob estresse | Impacto no usuário real |
+|---|---|---|---|
+| `GET /owners` | **Carga N+1**: `Owner` carrega `Set<Pet>` com `FetchType.EAGER`, que por sua vez carrega `Set<Visit>` EAGER. Listar todos os owners executa cascata de queries | Latência cresce com volume de dados | Lentidão na tela principal de busca — primeiro contato do recepcionista |
+| `POST /owners` | **Write-path completo**: validação → mapeamento → JPA persist → flush. Transação completa | Contenção de locks no banco | Falha no cadastro de novos clientes — perda de receita |
+| `GET /owners/{id}` | **Consulta com grafo**: retorna owner + pets + visits aninhados. Potencial N+1 se não otimizado | Latência proporcional ao nº de pets/visits | Atraso ao abrir ficha do paciente durante consulta |
+| `POST /owners/{id}/pets` | **Cascata JPA**: `CascadeType.ALL` no `Pet.type` pode causar side-effects inesperados. `savePet()` faz lookup de `PetType` antes de salvar | Falha silenciosa se type_id inválido | Erro ao registrar novo animal — processo manual de fallback |
+| `POST /visits` | **Inserção em tabela filha**: criação de visit requer lookup do pet, potencial lock no owner pai via foreign key | Deadlock sob alta concorrência | Perda de registro de consulta — risco clínico (histórico incompleto) |
+| `GET /vets` | **Relação N:M**: `Vet` → `Specialty` via `@ManyToMany EAGER` + tabela de junção `vet_specialties`. Grafo de objetos denso | Memory pressure com muitos vets | Lentidão na agenda de veterinários — atrasos no atendimento |
 
 ### Trade-off: Por que esses e não outros?
 
@@ -368,36 +418,69 @@ Os endpoints abaixo foram selecionados para o teste de carga K6 por representare
 
 ```mermaid
 flowchart LR
-    subgraph "Análise Estática"
+    subgraph "Análise Estática (PMD + ArchUnit)"
         CC[Complexidade Ciclomática]
         CBO[Coupling Between Objects]
-        LCOM[Lack of Cohesion]
-        CS[Code Smells]
+        DC[Data Class / God Class]
+        CA["Ca/Ce (Fan-In/Fan-Out)"]
     end
 
-    subgraph "Análise Dinâmica"
+    subgraph "Análise Dinâmica (K6 + Prometheus)"
         LAT[Latência p50/p95/p99]
         ERR[Taxa de Erro]
         THR[Throughput req/s]
     end
 
-    subgraph "Domínio Alvo"
-        OC2["ClinicServiceImpl"]
-        OR2["OwnerRepository"]
-        VR2["VisitRepository"]
+    subgraph "Classes Alvo"
+        OC2["ClinicServiceImpl\n(CBO=24)"]
+        OR2["OwnerRestController\n(CBO=23)"]
+        VR2["JpaOwnerRepositoryImpl\n(LawOfDemeter ×3)"]
     end
 
     CC -->|"alta CC → lógica complexa"| LAT
     CBO -->|"alto CBO → cascata de dependências"| LAT
-    LCOM -->|"baixa coesão → God Class"| ERR
-    CS -->|"code smells detectados"| OC2
+    DC -->|"Data Class → baixa coesão"| ERR
+    CA -->|"alto Ce → instável sob mudança"| THR
 
     OC2 --> LAT
     OR2 --> THR
     VR2 --> ERR
 ```
 
-A hipótese do TCC é que classes com **alta complexidade ciclomática** e **alto acoplamento (CBO)** detectados pelo SonarQube tendem a apresentar **maior latência** e **maior taxa de erro** sob estresse, e que a refatoração dessas classes pode melhorar tanto as métricas estáticas quanto as dinâmicas.
+A hipótese do TCC é que classes com **alta complexidade ciclomática** e **alto acoplamento (CBO)** detectados pelo PMD tendem a apresentar **maior latência** e **maior taxa de erro** sob estresse, e que a refatoração dessas classes pode melhorar tanto as métricas estáticas quanto as dinâmicas.
+
+---
+
+## Infraestrutura de Análise Estática (ISO 25010)
+
+> Para documentação técnica detalhada, consulte [analise-estatica-iso25010.md](analise-estatica-iso25010.md).
+
+### Ferramentas
+
+| Ferramenta | Versão | Escopo | Saída |
+|---|---|---|---|
+| **PMD** (via maven-pmd-plugin) | 7.7.0 (plugin 3.26.0) | Microestrutural: code smells, CC, CBO, LOC | `target/site/pmd.csv` |
+| **ArchUnit** (archunit-junit5) | 1.3.0 | Macro-arquitetural: camadas, ciclos, métricas Ca/Ce | Console (Surefire) |
+
+### Comandos Rápidos
+
+```bash
+# PMD → CSV + visualização no terminal
+./mvnw compile pmd:pmd
+./mvnw pmd:check -Dpmd.logViolationsToConsole=true
+
+# ArchUnit → validação + métricas de acoplamento
+./mvnw test -Dtest="ValidacaoArquiteturalTest" -Dsurefire.useFile=false
+```
+
+### Baseline de Violações PMD (Pré-Refatoração)
+
+| Regra | Ocorrências | Classes Afetadas |
+|---|---|---|
+| DataClass | 7 | Person, Pet, Role, User, Visit, JdbcPet, BindingError |
+| LawOfDemeter | 3 | JpaOwnerRepositoryImpl |
+| CouplingBetweenObjects | 2 | OwnerRestController (CBO=23), ClinicServiceImpl (CBO=24) |
+| **Total** | **12** | |
 
 ---
 
@@ -425,6 +508,7 @@ mvn verify                  # Testes + JaCoCo coverage check
 | Controller (MockMvc) | `OwnerRestControllerTests`, `PetRestControllerTests`, `VetRestControllerTests`, `VisitRestControllerTests`, `PetTypeRestControllerTests`, `SpecialtyRestControllerTests`, `UserRestControllerTests` | Endpoints REST, serialização JSON, HTTP status codes |
 | Service | `ClinicServiceJpaTests`, `ClinicServiceSpringDataJpaTests`, `ClinicServiceH2JdbcTests`, `ClinicServiceHsqlJdbcTests` | Lógica de negócio nos diferentes backends de persistência |
 | Validação | `ValidatorTests`, `PetAgeValidatorTest` | Constraints de Bean Validation |
+| Arquitetural (ArchUnit) | `ValidacaoArquiteturalTest` | Isolamento de camadas, ausência de ciclos, métricas Ca/Ce por pacote |
 | Config | `SpringConfigTests` | Context carrega sem erros |
 
 ### Rodar a aplicação
@@ -472,7 +556,8 @@ Acesse:
 | Plugin | Propósito |
 |---|---|
 | `jacoco-maven-plugin` | Cobertura de código (85% line, 66% branch) |
-| `sonar-maven-plugin` | Análise estática SonarQube |
+| `maven-pmd-plugin` | Análise estática PMD 7.x (code smells, CC, CBO) |
+| `archunit-junit5` | Validação arquitetural (camadas, ciclos, métricas Ca/Ce) |
 | `spotbugs-maven-plugin` | Detecção de bugs |
 | `refactor-first-maven-plugin` | Priorização de refatoração |
 | `openapi-generator-maven-plugin` | Geração de DTOs e interfaces a partir do contrato |
