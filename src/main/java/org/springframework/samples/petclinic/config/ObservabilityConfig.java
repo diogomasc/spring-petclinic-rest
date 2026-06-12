@@ -17,34 +17,28 @@ package org.springframework.samples.petclinic.config;
 
 import io.micrometer.observation.ObservationRegistry;
 import io.micrometer.observation.aop.ObservedAspect;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Configuração da Observation API (Micrometer) para instrumentação granular.
- * <p>
- * Registra o {@link ObservedAspect} como bean Spring, habilitando o
- * processamento
- * das anotações {@code @Observed} via AOP (AspectJ proxy). Cada método anotado
- * gera automaticamente métricas de Timer (latência) e LongTaskTimer
- * (concorrência)
- * no Prometheus com tags {@code class}, {@code method} e {@code error}.
- * <p>
- * Restrições:
- * <ul>
- * <li>Funciona apenas em Spring Beans gerenciados pelo contexto</li>
- * <li>Não intercepta chamadas internas à mesma classe (self-invocation)</li>
- * <li>Não funciona em métodos {@code static} ou objetos instanciados com
- * {@code new}</li>
- * </ul>
+ * Registra o {@link ObservedAspect} para processar anotações {@code @Observed}
+ * via AOP. Gera métricas de Timer (latência) no Prometheus com tags
+ * {@code class}, {@code method} e {@code error}.
  *
  * @see io.micrometer.observation.annotation.Observed
  */
 @Configuration(proxyBeanMethods = false)
 public class ObservabilityConfig {
 
+    private static final Logger log = LoggerFactory.getLogger(ObservabilityConfig.class);
+
     @Bean
+    @ConditionalOnMissingBean
     ObservedAspect observedAspect(ObservationRegistry registry) {
+        log.info("ObservedAspect registrado — métricas @Observed ativas (metodo_execucao_seconds_*)");
         return new ObservedAspect(registry);
     }
 }
