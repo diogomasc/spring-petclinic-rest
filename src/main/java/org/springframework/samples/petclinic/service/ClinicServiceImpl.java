@@ -25,6 +25,8 @@ import org.springframework.samples.petclinic.repository.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import io.micrometer.observation.annotation.Observed;
+
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
@@ -48,12 +50,12 @@ public class ClinicServiceImpl implements ClinicService {
     private final PetTypeRepository petTypeRepository;
 
     public ClinicServiceImpl(
-        PetRepository petRepository,
-        VetRepository vetRepository,
-        OwnerRepository ownerRepository,
-        VisitRepository visitRepository,
-        SpecialtyRepository specialtyRepository,
-        PetTypeRepository petTypeRepository) {
+            PetRepository petRepository,
+            VetRepository vetRepository,
+            OwnerRepository ownerRepository,
+            VisitRepository visitRepository,
+            SpecialtyRepository specialtyRepository,
+            PetTypeRepository petTypeRepository) {
         this.petRepository = petRepository;
         this.vetRepository = vetRepository;
         this.ownerRepository = ownerRepository;
@@ -100,6 +102,7 @@ public class ClinicServiceImpl implements ClinicService {
 
     @Override
     @Transactional(readOnly = true)
+    @Observed(name = "metodo.execucao", contextualName = "Service_Vet_FindAll")
     public Collection<Vet> findAllVets() throws DataAccessException {
         return vetRepository.findAll();
     }
@@ -118,6 +121,7 @@ public class ClinicServiceImpl implements ClinicService {
 
     @Override
     @Transactional(readOnly = true)
+    @Observed(name = "metodo.execucao", contextualName = "Service_Owner_FindAll")
     public Collection<Owner> findAllOwners() throws DataAccessException {
         return ownerRepository.findAll();
     }
@@ -139,6 +143,7 @@ public class ClinicServiceImpl implements ClinicService {
 
     @Override
     @Transactional(readOnly = true)
+    @Observed(name = "metodo.execucao", contextualName = "Service_PetType_FindById")
     public PetType findPetTypeById(int petTypeId) {
         return findEntityById(() -> petTypeRepository.findById(petTypeId));
     }
@@ -193,6 +198,7 @@ public class ClinicServiceImpl implements ClinicService {
 
     @Override
     @Transactional(readOnly = true)
+    @Observed(name = "metodo.execucao", contextualName = "Service_Owner_FindById")
     public Owner findOwnerById(int id) throws DataAccessException {
         return findEntityById(() -> ownerRepository.findById(id));
     }
@@ -205,6 +211,7 @@ public class ClinicServiceImpl implements ClinicService {
 
     @Override
     @Transactional
+    @Observed(name = "metodo.execucao", contextualName = "Service_Pet_Save")
     public void savePet(Pet pet) throws DataAccessException {
         pet.setType(findPetTypeById(pet.getType().getId()));
         petRepository.save(pet);
@@ -212,6 +219,7 @@ public class ClinicServiceImpl implements ClinicService {
 
     @Override
     @Transactional
+    @Observed(name = "metodo.execucao", contextualName = "Service_Visit_Save")
     public void saveVisit(Visit visit) throws DataAccessException {
         visitRepository.save(visit);
 
@@ -225,6 +233,7 @@ public class ClinicServiceImpl implements ClinicService {
 
     @Override
     @Transactional
+    @Observed(name = "metodo.execucao", contextualName = "Service_Owner_Save")
     public void saveOwner(Owner owner) throws DataAccessException {
         ownerRepository.save(owner);
 

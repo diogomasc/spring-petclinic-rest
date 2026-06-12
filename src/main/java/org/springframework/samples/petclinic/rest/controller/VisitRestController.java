@@ -29,6 +29,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import io.micrometer.observation.annotation.Observed;
 import jakarta.transaction.Transactional;
 import java.util.ArrayList;
 import java.util.List;
@@ -51,7 +52,6 @@ public class VisitRestController implements VisitsApi {
         this.visitMapper = visitMapper;
     }
 
-
     @PreAuthorize("hasRole(@roles.OWNER_ADMIN)")
     @Override
     public ResponseEntity<List<VisitDto>> listVisits() {
@@ -64,7 +64,7 @@ public class VisitRestController implements VisitsApi {
 
     @PreAuthorize("hasRole(@roles.OWNER_ADMIN)")
     @Override
-    public ResponseEntity<VisitDto> getVisit( Integer visitId) {
+    public ResponseEntity<VisitDto> getVisit(Integer visitId) {
         Visit visit = this.clinicService.findVisitById(visitId);
         if (visit == null) {
             return new ResponseEntity<>(HttpStatus.NOT_FOUND);
@@ -74,12 +74,14 @@ public class VisitRestController implements VisitsApi {
 
     @PreAuthorize("hasRole(@roles.OWNER_ADMIN)")
     @Override
+    @Observed(name = "metodo.execucao", contextualName = "Controller_Visit_Add")
     public ResponseEntity<VisitDto> addVisit(VisitDto visitDto) {
         HttpHeaders headers = new HttpHeaders();
         Visit visit = visitMapper.toVisit(visitDto);
         this.clinicService.saveVisit(visit);
         visitDto = visitMapper.toVisitDto(visit);
-        headers.setLocation(UriComponentsBuilder.newInstance().path("/api/visits/{id}").buildAndExpand(visit.getId()).toUri());
+        headers.setLocation(
+                UriComponentsBuilder.newInstance().path("/api/visits/{id}").buildAndExpand(visit.getId()).toUri());
         return new ResponseEntity<>(visitDto, headers, HttpStatus.CREATED);
     }
 

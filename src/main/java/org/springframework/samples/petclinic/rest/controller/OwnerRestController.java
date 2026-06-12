@@ -49,6 +49,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.context.request.NativeWebRequest;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import io.micrometer.observation.annotation.Observed;
 import jakarta.transaction.Transactional;
 
 /**
@@ -69,9 +70,9 @@ public class OwnerRestController implements OwnersApi, V2Api {
     private final VisitMapper visitMapper;
 
     public OwnerRestController(ClinicService clinicService,
-                               OwnerMapper ownerMapper,
-                               PetMapper petMapper,
-                               VisitMapper visitMapper) {
+            OwnerMapper ownerMapper,
+            PetMapper petMapper,
+            VisitMapper visitMapper) {
         this.clinicService = clinicService;
         this.ownerMapper = ownerMapper;
         this.petMapper = petMapper;
@@ -85,6 +86,7 @@ public class OwnerRestController implements OwnersApi, V2Api {
 
     @PreAuthorize("hasRole(@roles.OWNER_ADMIN)")
     @Override
+    @Observed(name = "metodo.execucao", contextualName = "Controller_Owner_ListAll")
     public ResponseEntity<List<OwnerDto>> listOwners(String lastName) {
         Collection<Owner> owners;
         if (lastName != null) {
@@ -104,13 +106,14 @@ public class OwnerRestController implements OwnersApi, V2Api {
         int pageNumber = page == null ? 0 : page;
         int pageSize = size == null ? 20 : size;
         Page<Owner> owners = this.clinicService.findOwners(
-            lastName,
-            PageRequest.of(pageNumber, pageSize, Sort.by("id")));
+                lastName,
+                PageRequest.of(pageNumber, pageSize, Sort.by("id")));
         return new ResponseEntity<>(ownerMapper.toOwnerPageDto(owners), HttpStatus.OK);
     }
 
     @PreAuthorize("hasRole(@roles.OWNER_ADMIN)")
     @Override
+    @Observed(name = "metodo.execucao", contextualName = "Controller_Owner_FindById")
     public ResponseEntity<OwnerDto> getOwner(Integer ownerId) {
         Owner owner = this.clinicService.findOwnerById(ownerId);
         if (owner == null) {
@@ -121,13 +124,14 @@ public class OwnerRestController implements OwnersApi, V2Api {
 
     @PreAuthorize("hasRole(@roles.OWNER_ADMIN)")
     @Override
+    @Observed(name = "metodo.execucao", contextualName = "Controller_Owner_Add")
     public ResponseEntity<OwnerDto> addOwner(OwnerFieldsDto ownerFieldsDto) {
         HttpHeaders headers = new HttpHeaders();
         Owner owner = ownerMapper.toOwner(ownerFieldsDto);
         this.clinicService.saveOwner(owner);
         OwnerDto ownerDto = ownerMapper.toOwnerDto(owner);
         headers.setLocation(UriComponentsBuilder.newInstance()
-            .path("/api/owners/{id}").buildAndExpand(owner.getId()).toUri());
+                .path("/api/owners/{id}").buildAndExpand(owner.getId()).toUri());
         return new ResponseEntity<>(ownerDto, headers, HttpStatus.CREATED);
     }
 
@@ -161,6 +165,7 @@ public class OwnerRestController implements OwnersApi, V2Api {
 
     @PreAuthorize("hasRole(@roles.OWNER_ADMIN)")
     @Override
+    @Observed(name = "metodo.execucao", contextualName = "Controller_Pet_AddToOwner")
     public ResponseEntity<PetDto> addPetToOwner(Integer ownerId, PetFieldsDto petFieldsDto) {
         Owner owner = this.clinicService.findOwnerById(ownerId);
         if (owner == null) {
@@ -174,7 +179,7 @@ public class OwnerRestController implements OwnersApi, V2Api {
         this.clinicService.savePet(pet);
         PetDto petDto = petMapper.toPetDto(pet);
         headers.setLocation(UriComponentsBuilder.newInstance().path("/api/pets/{id}")
-            .buildAndExpand(pet.getId()).toUri());
+                .buildAndExpand(pet.getId()).toUri());
         return new ResponseEntity<>(petDto, headers, HttpStatus.CREATED);
     }
 
@@ -197,6 +202,7 @@ public class OwnerRestController implements OwnersApi, V2Api {
 
     @PreAuthorize("hasRole(@roles.OWNER_ADMIN)")
     @Override
+    @Observed(name = "metodo.execucao", contextualName = "Controller_Visit_AddToOwner")
     public ResponseEntity<VisitDto> addVisitToOwner(Integer ownerId, Integer petId, VisitFieldsDto visitFieldsDto) {
         HttpHeaders headers = new HttpHeaders();
         Visit visit = visitMapper.toVisit(visitFieldsDto);
@@ -206,10 +212,9 @@ public class OwnerRestController implements OwnersApi, V2Api {
         this.clinicService.saveVisit(visit);
         VisitDto visitDto = visitMapper.toVisitDto(visit);
         headers.setLocation(UriComponentsBuilder.newInstance().path("/api/visits/{id}")
-            .buildAndExpand(visit.getId()).toUri());
+                .buildAndExpand(visit.getId()).toUri());
         return new ResponseEntity<>(visitDto, headers, HttpStatus.CREATED);
     }
-
 
     @PreAuthorize("hasRole(@roles.OWNER_ADMIN)")
     @Override
