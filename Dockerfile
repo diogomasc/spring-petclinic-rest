@@ -19,6 +19,14 @@ RUN mvn clean package -DskipTests -q
 # Jammy (Ubuntu 22.04 LTS) = base estável e auditada.
 FROM eclipse-temurin:21-jre-jammy AS runtime
 
+# ── Labels OCI ───────────────────────────────────────────────────────────────
+# Permitem rastrear qual build está em execução via `docker inspect`,
+# e podem ser expostos como label service_version nos dashboards Grafana/Prometheus.
+LABEL org.opencontainers.image.version="4.0.2"
+LABEL org.opencontainers.image.title="spring-petclinic-rest"
+LABEL org.opencontainers.image.description="Spring PetClinic REST API — TCC benchmark target"
+LABEL org.opencontainers.image.source="https://github.com/spring-petclinic/spring-petclinic-rest"
+
 WORKDIR /app
 
 # Copiar somente o fat-jar gerado; tudo do estágio builder é descartado.
