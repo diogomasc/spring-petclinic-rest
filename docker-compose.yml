@@ -1,26 +1,36 @@
+# ── API Spring PetClinic REST ─────────────────────────────────────────────────
+#
+# Uso:
+#   docker compose up -d          → sobe a API (cria a rede tcc-api-net)
+#   docker compose down           → derruba e descarta o container (H2 limpo)
+#   docker compose up --build -d  → rebuild da imagem + sobe
+#
+# Nota: restart: "no" é intencional — garante reinício MANUAL para validar
+# o comportamento do H2 em memória (banco limpo a cada novo `up`).
+
 services:
-  mysql:
-    image: mysql:8.4
-    command: --mysql-native-password=ON
-    ports:
-      - "3306:3306"
+
+  petclinic-api:
+    build: .
+    container_name: petclinic-api
     environment:
-      - MYSQL_ROOT_PASSWORD=
-      - MYSQL_ALLOW_EMPTY_PASSWORD=true
-      - MYSQL_USER=petclinic
-      - MYSQL_PASSWORD=petclinic
-      - MYSQL_DATABASE=petclinic
-    volumes:
-      - "./conf.d:/etc/mysql/conf.d:ro"
-    profiles:
-      - mysql
-  postgres:
-    image: postgres:16.3
+      # Profile h2 → banco em memória, limpo a cada reinício do container.
+      # spring-data-jpa → camada de repositório padrão do projeto.
+      SPRING_PROFILES_ACTIVE: h2,spring-data-jpa
+      # Porta padrão do application.properties. Sobrescreva para 8080 se necessário.
+      SERVER_PORT: 9966
     ports:
-      - "5432:5432"
-    environment:
-      - POSTGRES_PASSWORD=petclinic
-      - POSTGRES_USER=petclinic
-      - POSTGRES_DB=petclinic
-    profiles:
-      - postgres
+      - "9966:9966"
+    networks:
+      - tcc-api-net
+    # Sem restart automático: reinício deve ser manual para garantir H2 limpo.
+    restart: "no"
+
+# ── Rede compartilhada com a infra de observabilidade ────────────────────────
+# O docker-compose.infra.yml do repo infra-refactoring-metrics referencia
+# esta rede como external para Prometheus e K6 alcançarem o container pelo
+# hostname 'petclinic-api'.
+networks:
+  tcc-api-net:
+    name: tcc-api-net
+    driver: bridge
