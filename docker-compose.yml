@@ -78,7 +78,7 @@ services:
       start_period: 30s
 
 # ── Rede compartilhada com a infra de observabilidade ────────────────────────
-# O docker-compose.yml do repo infra-refactoring-metrics referencia
+# O docker-compose.infra.yml do repo infra-refactoring-metrics referencia
 # esta rede como external para Prometheus e K6 alcançarem o container pelo
 # hostname 'petclinic-api'.
 networks:
