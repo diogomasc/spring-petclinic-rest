@@ -29,7 +29,9 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.util.UriComponentsBuilder;
 
-import io.micrometer.observation.annotation.Observed;
+// @Observed removido: POST /api/visits não é exercitado pelo k6.
+// O endpoint canônico para criação de visitas é POST /owners/{id}/pets/{petId}/visits,
+// instrumentado em OwnerRestController como Controller_Visit_AddToOwner.
 import jakarta.transaction.Transactional;
 import java.util.ArrayList;
 import java.util.List;
@@ -74,7 +76,6 @@ public class VisitRestController implements VisitsApi {
 
     @PreAuthorize("hasRole(@roles.OWNER_ADMIN)")
     @Override
-    @Observed(name = "metodo.execucao", contextualName = "Controller_Visit_Add")
     public ResponseEntity<VisitDto> addVisit(VisitDto visitDto) {
         HttpHeaders headers = new HttpHeaders();
         Visit visit = visitMapper.toVisit(visitDto);
