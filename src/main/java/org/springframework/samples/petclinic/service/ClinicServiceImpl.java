@@ -100,6 +100,14 @@ public class ClinicServiceImpl implements ClinicService {
         return findEntityById(() -> vetRepository.findById(id));
     }
 
+    /**
+     * Lista todos os veterinários com especialidades via relação N:M EAGER (Vet ↔ Specialty).
+     *
+     * <p><b>Exercitado por:</b> {@code GET /api/vets} (grupo k6 "GET /vets").
+     * <p><b>Span Prometheus:</b> {@code metodo_execucao_seconds{observation_contextualName="Service_Vet_FindAll"}}.
+     * <p><b>Risco débito técnico:</b> relação N:M EAGER na tabela vet_specialties — amplifica
+     * memória e latência sob carga crescente de VUs.
+     */
     @Override
     @Transactional(readOnly = true)
     @Observed(name = "metodo.execucao", contextualName = "Service_Vet_FindAll")
@@ -119,6 +127,14 @@ public class ClinicServiceImpl implements ClinicService {
         vetRepository.delete(vet);
     }
 
+    /**
+     * Lista todos os donos com pets e visitas via carregamento EAGER (Owner → Pet → Visit).
+     *
+     * <p><b>Exercitado por:</b> {@code GET /api/owners} (grupo k6 "GET /owners").
+     * <p><b>Span Prometheus:</b> {@code metodo_execucao_seconds{observation_contextualName="Service_Owner_FindAll"}}.
+     * <p><b>Risco débito técnico:</b> N+1 EAGER cascade — endppoint crítico com maior potencial
+     * de degradação dinâmica proporcional ao volume de dados sob estresse.
+     */
     @Override
     @Transactional(readOnly = true)
     @Observed(name = "metodo.execucao", contextualName = "Service_Owner_FindAll")
@@ -141,6 +157,14 @@ public class ClinicServiceImpl implements ClinicService {
         ownerRepository.delete(owner);
     }
 
+    /**
+     * Busca o tipo de pet por ID — chamado internamente por {@link #savePet(Pet)}.
+     *
+     * <p><b>Exercitado por:</b> {@code POST /api/owners/{id}/pets} (cadeia interna via savePet).
+     * <p><b>Span Prometheus:</b> {@code metodo_execucao_seconds{observation_contextualName="Service_PetType_FindById"}}.
+     * <p><b>Risco débito técnico:</b> lookup adicional por dentro de savePet — contribui para
+     * o endpoint de adição de pet ter a cadeia de observação mais profunda (4 spans).
+     */
     @Override
     @Transactional(readOnly = true)
     @Observed(name = "metodo.execucao", contextualName = "Service_PetType_FindById")
@@ -196,6 +220,17 @@ public class ClinicServiceImpl implements ClinicService {
         return petRepository.findPetTypes();
     }
 
+    /**
+     * Busca dono por ID retornando o grafo completo Owner + pets aninhados + visits.
+     *
+     * <p><b>Exercitado por:</b>
+     * <ul>
+     *   <li>{@code GET /api/owners/{id}} (grupo k6 "GET /owners/{ownerId}");</li>
+     *   <li>{@code POST /api/owners/{id}/pets} (lookup interno antes de savePet).</li>
+     * </ul>
+     * <p><b>Span Prometheus:</b> {@code metodo_execucao_seconds{observation_contextualName="Service_Owner_FindById"}}.
+     * <p><b>Risco débito técnico:</b> grafo profundo por ID — potencial N+1 se não usar JOIN FETCH.
+     */
     @Override
     @Transactional(readOnly = true)
     @Observed(name = "metodo.execucao", contextualName = "Service_Owner_FindById")
@@ -209,6 +244,14 @@ public class ClinicServiceImpl implements ClinicService {
         return findEntityById(() -> petRepository.findById(id));
     }
 
+    /**
+     * Persiste um pet resolvendo o PetType por ID antes do flush JPA.
+     *
+     * <p><b>Exercitado por:</b> {@code POST /api/owners/{id}/pets} (grupo k6 "POST /owners/{ownerId}/pets").
+     * <p><b>Span Prometheus:</b> {@code metodo_execucao_seconds{observation_contextualName="Service_Pet_Save"}}.
+     * <p><b>Risco débito técnico:</b> CascadeType.ALL no tipo do pet — side-effects inesperados;
+     * lookup interno em findPetTypeById adiciona um span extra na cadeia (4 spans totais).
+     */
     @Override
     @Transactional
     @Observed(name = "metodo.execucao", contextualName = "Service_Pet_Save")
@@ -217,6 +260,15 @@ public class ClinicServiceImpl implements ClinicService {
         petRepository.save(pet);
     }
 
+    /**
+     * Persiste uma visita na tabela filha associada ao pet via FK.
+     *
+     * <p><b>Exercitado por:</b> {@code POST /api/owners/{id}/pets/{petId}/visits}
+     * (grupo k6 "POST /owners/{ownerId}/pets/{petId}/visits").
+     * <p><b>Span Prometheus:</b> {@code metodo_execucao_seconds{observation_contextualName="Service_Visit_Save"}}.
+     * <p><b>Risco débito técnico:</b> inserção em tabela filha — impacto de
+     * lock de linha proporcional ao volume de visitas sob carga.
+     */
     @Override
     @Transactional
     @Observed(name = "metodo.execucao", contextualName = "Service_Visit_Save")
@@ -231,6 +283,14 @@ public class ClinicServiceImpl implements ClinicService {
         return vetRepository.findAll();
     }
 
+    /**
+     * Persiste um dono via JPA (INSERT ou UPDATE).
+     *
+     * <p><b>Exercitado por:</b> {@code POST /api/owners} (grupo k6 "POST /owners").
+     * <p><b>Span Prometheus:</b> {@code metodo_execucao_seconds{observation_contextualName="Service_Owner_Save"}}.
+     * <p><b>Risco débito técnico:</b> write-path completo com Bean Validation e flush JPA —
+     * sensível à pressaão do pool de conexões sob pico de VUs concorrentes.
+     */
     @Override
     @Transactional
     @Observed(name = "metodo.execucao", contextualName = "Service_Owner_Save")
