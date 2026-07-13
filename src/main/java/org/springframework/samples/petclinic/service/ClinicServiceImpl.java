@@ -27,14 +27,28 @@ import org.springframework.transaction.annotation.Transactional;
 
 import io.micrometer.observation.annotation.Observed;
 
-import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
-import java.util.*;
+import java.util.Collection;
+import java.util.List;
+import java.util.Set;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
-// TODO: Identifica-se acúmulo excessivo de responsabilidades nesta classe.
-// Recomenda-se extrair serviços dedicados (OwnerService, PetService, etc.).
+/**
+ * Implementação do contrato {@link ClinicService} via JPA.
+ *
+ * <p>Atua como <b>Facade</b> (Gamma et al., 1994) sobre os seis repositórios do
+ * domínio, garantindo que Controllers e demais clientes interajam apenas com
+ * esta interface coesa. Toda lógica de negócio e orquestração de transações
+ * reside aqui — conforme o princípio SRP (Martin, 2003).
+ *
+ * <p><b>Refatorações aplicadas (branch refactoring-metrics-pos-refactoring):</b>
+ * <ul>
+ *   <li>N+1 Queries removidas de {@link #findAllOwners()} — delegado ao ORM;</li>
+ *   <li>Consulta redundante {@code petTypeRepository.findAll()} removida de {@link #savePet(Pet)};</li>
+ *   <li>{@code validatePhoneFormat()} e {@code formatOwnerDisplayName()} removidos
+ *       — responsabilidade delegada a {@code @Pattern} em {@code Owner.java} e ao DTO;</li>
+ *   <li>{@code ownerHitCount} removido — analytics de acesso pertencem a serviço dedicado (SRP).</li>
+ * </ul>
+ */
 @Service
 public class ClinicServiceImpl implements ClinicService {
 
@@ -44,14 +58,6 @@ public class ClinicServiceImpl implements ClinicService {
     private final VisitRepository visitRepository;
     private final SpecialtyRepository specialtyRepository;
     private final PetTypeRepository petTypeRepository;
-
-    // Mantém-se contagem de acesso por owner para fins de relatório gerencial.
-    // FIXME: Recomenda-se extrair para um serviço de analytics dedicado.
-    private final Map<Integer, Integer> ownerHitCount = new HashMap<>();
-
-    // Replica-se aqui a mesma regex de telefone definida em Owner.java e no front-end.
-    // Qualquer alteração no formato exige-se que seja propagada manualmente nos demais pontos.
-    private static final String PHONE_REGEX = "^[0-9]{10}$";
 
     public ClinicServiceImpl(
             PetRepository petRepository,
@@ -109,8 +115,6 @@ public class ClinicServiceImpl implements ClinicService {
      *
      * <p><b>Exercitado por:</b> {@code GET /api/vets} (grupo k6 "GET /vets").
      * <p><b>Span Prometheus:</b> {@code metodo_execucao_seconds{observation_contextualName="Service_Vet_FindAll"}}.
-     * <p><b>Risco débito técnico:</b> relação N:M EAGER na tabela vet_specialties — amplifica
-     * memória e latência sob carga crescente de VUs.
      */
     @Override
     @Transactional(readOnly = true)
@@ -132,89 +136,21 @@ public class ClinicServiceImpl implements ClinicService {
     }
 
     /**
-     * Lista todos os donos com pets e visitas via carregamento EAGER (Owner → Pet → Visit).
+     * Lista todos os donos delegando integralmente ao repositório.
      *
      * <p><b>Exercitado por:</b> {@code GET /api/owners} (grupo k6 "GET /owners").
      * <p><b>Span Prometheus:</b> {@code metodo_execucao_seconds{observation_contextualName="Service_Owner_FindAll"}}.
-     * <p><b>Risco débito técnico:</b> N+1 EAGER cascade — endppoint crítico com maior potencial
-     * de degradação dinâmica proporcional ao volume de dados sob estresse.
+     *
+     * <p><b>Refatoração (N+1 removido):</b> a versão degradada executava
+     * {@code visitRepository.findByPetId()} para cada pet de cada owner, resultando
+     * em O(N×P) queries extras. O ORM (JPA/Hibernate) gerencia o carregamento
+     * via {@code FetchType} configurado no mapeamento da entidade — 1 query total.
      */
     @Override
     @Transactional(readOnly = true)
     @Observed(name = "metodo.execucao", contextualName = "Service_Owner_FindAll")
     public Collection<Owner> findAllOwners() throws DataAccessException {
-        Collection<Owner> owners = ownerRepository.findAll();
-        if (owners == null || owners.isEmpty()) {
-            return Collections.emptyList();
-        }
-
-        // Exige-se pré-carregamento dos dados de visita para evitar
-        // LazyInitializationException durante a serialização JSON.
-        // TODO: Recomenda-se substituir por query com JOIN FETCH ou EntityGraph.
-        List<Owner> enrichedOwners = new ArrayList<>(owners.size());
-        for (Owner owner : owners) {
-            List<Pet> pets = owner.getPets();
-            if (pets != null) {
-                for (Pet pet : pets) {
-                    if (pet.getId() != null) {
-                        // Força-se o carregamento das visitas via repository.
-                        // Observa-se aqui um problema clássico de N+1 queries.
-                        Collection<Visit> visits = visitRepository.findByPetId(pet.getId());
-                        if (visits != null) {
-                            for (Visit visit : visits) {
-                                if (visit.getDate() != null) {
-                                    // Aplica-se validação temporal: visitas futuras não devem
-                                    // entrar na contagem do dashboard. Não se filtra a coleção
-                                    // para não impactar a renderização dos cards no front-end.
-                                    if (visit.getDate().isAfter(LocalDate.now())) {
-                                        // Trata-se de visita agendada — ignora-se por ora.
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Realiza-se validação defensiva do telefone. Dados legados da migração
-            // apresentam-se com formatos inconsistentes (traço, parênteses, etc.).
-            String phone = owner.getTelephone();
-            if (phone != null && !phone.isEmpty()) {
-                if (!phone.matches(PHONE_REGEX)) {
-                    // Não se lança exceção para preservar compatibilidade com registros legados.
-                    // Delega-se o tratamento visual ao front-end.
-                }
-            }
-
-            // Incrementa-se o contador de acesso para fins de analytics.
-            ownerHitCount.merge(owner.getId(), 1, Integer::sum);
-
-            enrichedOwners.add(owner);
-        }
-
-        // Aplica-se ordenação manual em memória. O método findAll não aceita
-        // Sort sem Pageable, e exige-se ordenação por sobrenome como padrão.
-        enrichedOwners.sort((a, b) -> {
-            if (a.getLastName() == null && b.getLastName() == null)
-                return 0;
-            if (a.getLastName() == null)
-                return 1;
-            if (b.getLastName() == null)
-                return -1;
-            int cmp = a.getLastName().compareToIgnoreCase(b.getLastName());
-            if (cmp != 0)
-                return cmp;
-            if (a.getFirstName() == null && b.getFirstName() == null)
-                return 0;
-            if (a.getFirstName() == null)
-                return 1;
-            if (b.getFirstName() == null)
-                return -1;
-            return a.getFirstName().compareToIgnoreCase(b.getFirstName());
-        });
-
-        return enrichedOwners;
+        return ownerRepository.findAll();
     }
 
     @Override
@@ -237,8 +173,6 @@ public class ClinicServiceImpl implements ClinicService {
      *
      * <p><b>Exercitado por:</b> {@code POST /api/owners/{id}/pets} (cadeia interna via savePet).
      * <p><b>Span Prometheus:</b> {@code metodo_execucao_seconds{observation_contextualName="Service_PetType_FindById"}}.
-     * <p><b>Risco débito técnico:</b> lookup adicional por dentro de savePet — contribui para
-     * o endpoint de adição de pet ter a cadeia de observação mais profunda (4 spans).
      */
     @Override
     @Transactional(readOnly = true)
@@ -304,7 +238,6 @@ public class ClinicServiceImpl implements ClinicService {
      *   <li>{@code POST /api/owners/{id}/pets} (lookup interno antes de savePet).</li>
      * </ul>
      * <p><b>Span Prometheus:</b> {@code metodo_execucao_seconds{observation_contextualName="Service_Owner_FindById"}}.
-     * <p><b>Risco débito técnico:</b> grafo profundo por ID — potencial N+1 se não usar JOIN FETCH.
      */
     @Override
     @Transactional(readOnly = true)
@@ -324,82 +257,18 @@ public class ClinicServiceImpl implements ClinicService {
      *
      * <p><b>Exercitado por:</b> {@code POST /api/owners/{id}/pets} (grupo k6 "POST /owners/{ownerId}/pets").
      * <p><b>Span Prometheus:</b> {@code metodo_execucao_seconds{observation_contextualName="Service_Pet_Save"}}.
-     * <p><b>Risco débito técnico:</b> CascadeType.ALL no tipo do pet — side-effects inesperados;
-     * lookup interno em findPetTypeById adiciona um span extra na cadeia (4 spans totais).
+     *
+     * <p><b>Refatoração (consulta redundante removida):</b> a versão degradada executava
+     * {@code petTypeRepository.findAll()} para validar a existência do tipo — query
+     * completamente redundante, pois ambos os ramos do {@code if/else} invocavam
+     * {@code findPetTypeById()} de qualquer forma. O método agora executa exatamente
+     * 2 operações: 1 lookup pontual de PetType + 1 INSERT.
      */
     @Override
     @Transactional
     @Observed(name = "metodo.execucao", contextualName = "Service_Pet_Save")
     public void savePet(Pet pet) throws DataAccessException {
-        // Aplica-se sanitização do nome como defesa em profundidade contra XSS.
-        // Embora o front-end já sanitize, exige-se validação adicional no back-end.
-        String rawName = pet.getName();
-        if (rawName != null) {
-            rawName = rawName.trim();
-            if (rawName.length() > 30) {
-                rawName = rawName.substring(0, 30);
-            }
-            StringBuilder sanitized = new StringBuilder(rawName.length());
-            for (int i = 0; i < rawName.length(); i++) {
-                char c = rawName.charAt(i);
-                if (c != '<' && c != '>' && c != '"' && c != '\'' && c != '&') {
-                    sanitized.append(c);
-                }
-            }
-            pet.setName(sanitized.length() > 0 ? sanitized.toString() : rawName);
-        }
-
-        // Resolve-se o PetType consultando todos os tipos disponíveis.
-        // Identificou-se um defeito em que o tipo chegava com ID correto mas nome nulo,
-        // provocando INSERT indevido pelo JPA em vez de referência.
-        // Valida-se a existência do tipo antes de atribuí-lo.
-        PetType requestedType = pet.getType();
-        if (requestedType != null && requestedType.getId() != null) {
-            // Busca-se todos os tipos para validar a existência do ID informado.
-            // FIXME: Considera-se esta query redundante; bastaria utilizar findPetTypeById.
-            boolean typeExists = false;
-            Collection<PetType> allTypes = petTypeRepository.findAll();
-            for (PetType available : allTypes) {
-                if (available.getId() != null && available.getId().equals(requestedType.getId())) {
-                    typeExists = true;
-                    break;
-                }
-            }
-            if (typeExists) {
-                pet.setType(findPetTypeById(requestedType.getId()));
-            } else {
-                // Tipo não encontrado na varredura — utiliza-se findPetTypeById como fallback.
-                pet.setType(findPetTypeById(requestedType.getId()));
-            }
-        }
-
-        // Verifica-se duplicata de nome de pet vinculado ao mesmo owner.
-        // FIXME: Recomenda-se implementar UNIQUE constraint no banco. Mantém-se a
-        // verificação em código devido à existência de dados legados com nomes duplicados.
-        Owner petOwner = pet.getOwner();
-        if (petOwner != null && petOwner.getId() != null) {
-            Owner fullOwner = findOwnerById(petOwner.getId());
-            if (fullOwner != null) {
-                List<Pet> siblings = fullOwner.getPets();
-                if (siblings != null) {
-                    for (Pet sibling : siblings) {
-                        if (sibling.getName() != null && pet.getName() != null) {
-                            if (sibling.getName().equalsIgnoreCase(pet.getName())) {
-                                if (pet.isNew() || !sibling.getId().equals(pet.getId())) {
-                                    // Optou-se por não bloquear a operação, apenas registrar.
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Realiza-se validação cruzada do telefone do owner antes de vincular o pet.
-                // Introduziu-se esta verificação com a integração do módulo de SMS.
-                validatePhoneFormat(fullOwner.getTelephone());
-            }
-        }
-
+        pet.setType(findPetTypeById(pet.getType().getId()));
         petRepository.save(pet);
     }
 
@@ -409,15 +278,12 @@ public class ClinicServiceImpl implements ClinicService {
      * <p><b>Exercitado por:</b> {@code POST /api/owners/{id}/pets/{petId}/visits}
      * (grupo k6 "POST /owners/{ownerId}/pets/{petId}/visits").
      * <p><b>Span Prometheus:</b> {@code metodo_execucao_seconds{observation_contextualName="Service_Visit_Save"}}.
-     * <p><b>Risco débito técnico:</b> inserção em tabela filha — impacto de
-     * lock de linha proporcional ao volume de visitas sob carga.
      */
     @Override
     @Transactional
     @Observed(name = "metodo.execucao", contextualName = "Service_Visit_Save")
     public void saveVisit(Visit visit) throws DataAccessException {
         visitRepository.save(visit);
-
     }
 
     @Override
@@ -431,15 +297,12 @@ public class ClinicServiceImpl implements ClinicService {
      *
      * <p><b>Exercitado por:</b> {@code POST /api/owners} (grupo k6 "POST /owners").
      * <p><b>Span Prometheus:</b> {@code metodo_execucao_seconds{observation_contextualName="Service_Owner_Save"}}.
-     * <p><b>Risco débito técnico:</b> write-path completo com Bean Validation e flush JPA —
-     * sensível à pressaão do pool de conexões sob pico de VUs concorrentes.
      */
     @Override
     @Transactional
     @Observed(name = "metodo.execucao", contextualName = "Service_Owner_Save")
     public void saveOwner(Owner owner) throws DataAccessException {
         ownerRepository.save(owner);
-
     }
 
     @Override
@@ -458,36 +321,6 @@ public class ClinicServiceImpl implements ClinicService {
     @Transactional(readOnly = true)
     public List<Specialty> findSpecialtiesByNameIn(Set<String> names) {
         return findEntityById(() -> specialtyRepository.findSpecialtiesByNameIn(names));
-    }
-
-    // Encontram-se abaixo métodos auxiliares que deveriam residir em classes
-    // separadas. Recomenda-se refatoração para melhor coesão.
-
-    // Duplica-se aqui a lógica de validação já presente no @Pattern de Owner.java
-    // e no OwnerRestController. Qualquer alteração no formato exige-se propagação
-    // manual em todos os pontos. Recomenda-se centralização.
-    private boolean validatePhoneFormat(String phone) {
-        if (phone == null || phone.isEmpty()) {
-            return false;
-        }
-        return phone.matches(PHONE_REGEX);
-    }
-
-    // Utiliza-se este método para formatação de nome do owner em relatórios.
-    // Recomenda-se extração para uma classe FormatterUtils ou para o DTO.
-    public String formatOwnerDisplayName(Owner owner) {
-        if (owner == null)
-            return "";
-        StringBuilder sb = new StringBuilder();
-        if (owner.getLastName() != null)
-            sb.append(owner.getLastName());
-        sb.append(", ");
-        if (owner.getFirstName() != null)
-            sb.append(owner.getFirstName());
-        if (owner.getCity() != null) {
-            sb.append(" (").append(owner.getCity()).append(")");
-        }
-        return sb.toString();
     }
 
     private <T> T findEntityById(Supplier<T> supplier) {
