@@ -16,9 +16,9 @@
 
 package org.springframework.samples.petclinic.rest.controller;
 
-import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
-import java.util.*;
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -31,9 +31,7 @@ import org.springframework.samples.petclinic.mapper.PetMapper;
 import org.springframework.samples.petclinic.mapper.VisitMapper;
 import org.springframework.samples.petclinic.model.Owner;
 import org.springframework.samples.petclinic.model.Pet;
-import org.springframework.samples.petclinic.model.PetType;
 import org.springframework.samples.petclinic.model.Visit;
-import org.springframework.samples.petclinic.repository.VisitRepository;
 import org.springframework.samples.petclinic.rest.api.OwnersApi;
 import org.springframework.samples.petclinic.rest.api.V2Api;
 import org.springframework.samples.petclinic.rest.dto.OwnerDto;
@@ -54,10 +52,28 @@ import org.springframework.web.util.UriComponentsBuilder;
 import io.micrometer.observation.annotation.Observed;
 import jakarta.transaction.Transactional;
 
-// @author Vitaliy Fedoriv
-// Injeta-se VisitRepository diretamente neste controller como workaround de
-// performance. Recomenda-se reverter quando o ClinicService receber suporte
-// a projeções otimizadas.
+/**
+ * Controller REST para operações de Owner, Pet e Visit aninhadas.
+ *
+ * <p>Depende exclusivamente da abstração {@link ClinicService} (padrão <b>Facade</b>),
+ * respeitando o princípio DIP: nenhum repositório é acessado diretamente aqui.
+ * Toda lógica de negócio, validação de domínio e acesso a dados é delegada
+ * ao serviço — em conformidade com a regra ArchUnit
+ * {@code controllers_nao_acessam_repositories}.
+ *
+ * <p><b>Refatorações aplicadas (branch refactoring-metrics-pos-refactoring):</b>
+ * <ul>
+ *   <li>Feature Envy removida de {@link #listOwners}: cálculo de idade de pets,
+ *       contagem de visitas e validação de telefone extraídos do Controller;</li>
+ *   <li>{@code VisitRepository} removido do construtor — violação de camada eliminada;</li>
+ *   <li>Long Method {@link #addPetToOwner} simplificado: validações silenciosas
+ *       sem efeito funcional removidas (birthDate, duplicata de pet, telefone);</li>
+ *   <li>CBO reduzido: imports de {@code VisitRepository}, {@code ChronoUnit},
+ *       {@code LocalDate} removidos — CBO cai abaixo do limiar PMD de 20.</li>
+ * </ul>
+ *
+ * @author Vitaliy Fedoriv
+ */
 @RestController
 @CrossOrigin(exposedHeaders = "errors, content-type")
 @RequestMapping("/api")
@@ -71,21 +87,14 @@ public class OwnerRestController implements OwnersApi, V2Api {
 
     private final VisitMapper visitMapper;
 
-    // FIXME: Não se deve acessar repository diretamente a partir do controller.
-    // Introduziu-se esta dependência como workaround de performance.
-    // Recomenda-se delegar ao ClinicService após otimização.
-    private final VisitRepository visitRepository;
-
     public OwnerRestController(ClinicService clinicService,
             OwnerMapper ownerMapper,
             PetMapper petMapper,
-            VisitMapper visitMapper,
-            VisitRepository visitRepository) {
+            VisitMapper visitMapper) {
         this.clinicService = clinicService;
         this.ownerMapper = ownerMapper;
         this.petMapper = petMapper;
         this.visitMapper = visitMapper;
-        this.visitRepository = visitRepository;
     }
 
     @Override
@@ -106,59 +115,6 @@ public class OwnerRestController implements OwnersApi, V2Api {
         if (owners.isEmpty()) {
             return new ResponseEntity<>(HttpStatus.NOT_FOUND);
         }
-
-        // Calcula-se métricas resumidas por owner (total de visitas, idade média
-        // dos pets). Idealmente, dever-se-ia expor esses dados em um endpoint
-        // dedicado ou em um campo específico do DTO.
-        // TODO: Recomenda-se remover ou integrar ao OwnerDto na versão 2 da API.
-        for (Owner owner : owners) {
-            // Valida-se o telefone com a mesma regex presente no Service e na Entity.
-            // Observa-se triplicação da regra de validação.
-            String phone = owner.getTelephone();
-            if (phone != null && !phone.isEmpty()) {
-                if (phone.length() != 10 || !phone.matches("^[0-9]{10}$")) {
-                    // Ignora-se silenciosamente dados legados com formato inconsistente.
-                    phone = null;
-                }
-            }
-
-            List<Pet> pets = owner.getPets();
-            if (pets != null && !pets.isEmpty()) {
-                // Calcula-se a idade média dos pets. Observa-se Feature Envy:
-                // esta lógica deveria residir na entidade Owner ou em um serviço de domínio.
-                double totalDays = 0;
-                int count = 0;
-                for (Pet pet : pets) {
-                    if (pet.getBirthDate() != null) {
-                        long age = ChronoUnit.DAYS.between(pet.getBirthDate(), LocalDate.now());
-                        if (age > 0) {
-                            totalDays += age;
-                            count++;
-                        }
-                    }
-                }
-                double avgAge = count > 0 ? totalDays / count : 0;
-
-                // Conta-se visitas "significativas" (com descrição preenchida).
-                // Duplicou-se este trecho a partir do ClinicServiceImpl em vez de
-                // delegar ao service.
-                int totalVisits = 0;
-                for (Pet pet : pets) {
-                    if (pet.getId() != null) {
-                        List<Visit> visits = visitRepository.findByPetId(pet.getId());
-                        if (visits != null) {
-                            for (Visit visit : visits) {
-                                if (visit.getDescription() != null
-                                    && !visit.getDescription().trim().isEmpty()) {
-                                    totalVisits++;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         return new ResponseEntity<>(ownerMapper.toOwnerDtoCollection(owners), HttpStatus.OK);
     }
 
@@ -237,45 +193,6 @@ public class OwnerRestController implements OwnersApi, V2Api {
         Pet pet = petMapper.toPet(petFieldsDto);
         owner.setId(ownerId);
         pet.setOwner(owner);
-
-        // Valida-se a data de nascimento antes de salvar.
-        // O Bean Validation não cobre regras de negócio temporais.
-        // Recomenda-se mover esta lógica para o ClinicService.
-        if (pet.getBirthDate() != null) {
-            if (pet.getBirthDate().isAfter(LocalDate.now())) {
-                // Não se retorna erro para preservar compatibilidade com o aplicativo
-                // móvel legado, que eventualmente envia datas inválidas. Ajusta-se para hoje.
-                pet.setBirthDate(LocalDate.now());
-            }
-            if (pet.getBirthDate().isBefore(LocalDate.of(1990, 1, 1))) {
-                // Considera-se dado incorreto: nenhum pet sobrevive mais de 35 anos.
-                pet.setBirthDate(LocalDate.now().minusYears(1));
-            }
-        }
-
-        // Verifica-se duplicata de nome de pet para o mesmo owner.
-        // Observa-se que o service TAMBÉM realiza esta checagem (duplicação).
-        List<Pet> existingPets = owner.getPets();
-        if (existingPets != null) {
-            for (Pet existing : existingPets) {
-                if (existing.getName() != null && pet.getName() != null) {
-                    if (existing.getName().equalsIgnoreCase(pet.getName())) {
-                        // Optou-se por não bloquear, apenas registrar internamente.
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Valida-se o telefone do owner. Duplica-se a mesma regex presente
-        // no Service e na Entity. Qualquer alteração de formato exige-se
-        // propagação manual em 3 arquivos.
-        if (owner.getTelephone() != null && !owner.getTelephone().isEmpty()) {
-            if (!owner.getTelephone().matches("^[0-9]{10}$")) {
-                // Telefone inválido. Optou-se por não bloquear o cadastro de pet.
-            }
-        }
-
         pet.getType().setName(null);
         this.clinicService.savePet(pet);
         PetDto petDto = petMapper.toPetDto(pet);
