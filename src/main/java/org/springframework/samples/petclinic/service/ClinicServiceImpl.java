@@ -15,6 +15,9 @@
  */
 package org.springframework.samples.petclinic.service;
 
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.data.domain.Page;
@@ -115,9 +118,15 @@ public class ClinicServiceImpl implements ClinicService {
      *
      * <p><b>Exercitado por:</b> {@code GET /api/vets} (grupo k6 "GET /vets").
      * <p><b>Span Prometheus:</b> {@code metodo_execucao_seconds{observation_contextualName="Service_Vet_FindAll"}}.
+     *
+     * <p><b>Cache:</b> resultado armazenado em {@code "vets"} após a primeira chamada —
+     * padrão Cache-Aside. Vets são dados de referência que não mudam durante uma
+     * sessão de testes k6, tornando {@code GET /vets} O(1) após o warm-up.
+     * Invalidado em {@link #saveVet} e {@link #deleteVet}.
      */
     @Override
     @Transactional(readOnly = true)
+    @Cacheable("vets")
     @Observed(name = "metodo.execucao", contextualName = "Service_Vet_FindAll")
     public Collection<Vet> findAllVets() throws DataAccessException {
         return vetRepository.findAll();
@@ -125,12 +134,14 @@ public class ClinicServiceImpl implements ClinicService {
 
     @Override
     @Transactional
+    @CacheEvict(value = "vets", allEntries = true)
     public void saveVet(Vet vet) throws DataAccessException {
         vetRepository.save(vet);
     }
 
     @Override
     @Transactional
+    @CacheEvict(value = "vets", allEntries = true)
     public void deleteVet(Vet vet) throws DataAccessException {
         vetRepository.delete(vet);
     }
@@ -173,28 +184,48 @@ public class ClinicServiceImpl implements ClinicService {
      *
      * <p><b>Exercitado por:</b> {@code POST /api/owners/{id}/pets} (cadeia interna via savePet).
      * <p><b>Span Prometheus:</b> {@code metodo_execucao_seconds{observation_contextualName="Service_PetType_FindById"}}.
+     *
+     * <p><b>Cache:</b> resultado armazenado em {@code "petTypes"} com chave {@code petTypeId}.
+     * PetTypes são dados de referência estáticos — cat, dog, bird, hamster, etc.
+     * Elimina o lookup ao banco no hot path de cada {@code POST /pets} sob carga k6.
+     * Invalidado em {@link #savePetType} e {@link #deletePetType}.
      */
     @Override
     @Transactional(readOnly = true)
+    @Cacheable(value = "petTypes", key = "#petTypeId")
     @Observed(name = "metodo.execucao", contextualName = "Service_PetType_FindById")
     public PetType findPetTypeById(int petTypeId) {
         return findEntityById(() -> petTypeRepository.findById(petTypeId));
     }
 
+    /**
+     * Lista todos os tipos de pet.
+     *
+     * <p><b>Cache:</b> resultado armazenado em {@code "petTypes"} com chave especial
+     * {@code 'all'} — evita colisão com entradas individuais por ID.
+     * Invalidado em {@link #savePetType} e {@link #deletePetType}.
+     */
     @Override
     @Transactional(readOnly = true)
+    @Cacheable(value = "petTypes", key = "'all'")
     public Collection<PetType> findAllPetTypes() throws DataAccessException {
         return petTypeRepository.findAll();
     }
 
     @Override
     @Transactional
+    @Caching(evict = {
+        @CacheEvict(value = "petTypes", allEntries = true)
+    })
     public void savePetType(PetType petType) throws DataAccessException {
         petTypeRepository.save(petType);
     }
 
     @Override
     @Transactional
+    @Caching(evict = {
+        @CacheEvict(value = "petTypes", allEntries = true)
+    })
     public void deletePetType(PetType petType) throws DataAccessException {
         petTypeRepository.delete(petType);
     }
